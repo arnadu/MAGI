@@ -3,6 +3,7 @@ langchain
 #langchain-core
 #langchain-openai
 langchain-text-splitters
+langchain_huggingface
 sentence_transformers
 openai
 pydantic
