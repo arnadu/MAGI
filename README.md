@@ -1,3 +1,4 @@
+---
 title: MAGI
 emoji: 🌍
 colorFrom: pink
@@ -8,4 +9,5 @@ app_file: app.py
 pinned: false
 license: apache
 hf_oauth: true
-short_description: Yet another LLM-powered assistant
+short_description: Yet another LLM assistant
+---
