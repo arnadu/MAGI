@@ -6,5 +6,6 @@ sdk: gradio
 sdk_version: 5.6.0
 app_file: app.py
 pinned: false
-license: mit
+license: apache
+hf_oauth: true
 short_description: Yet another LLM-powered assistant
