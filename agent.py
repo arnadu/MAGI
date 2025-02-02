@@ -501,36 +501,37 @@ def llm_loop(ss): #this generator will yield multiple updates that should be dis
         messages.append(msg) 
 
         #now execute the tool calls and add their results to the conversation
-        for tool_call in tool_calls: 
+        if tool_calls:  #some providers (eg Anthropic) may return None instead of an empty list when there are no tool calls
+            for tool_call in tool_calls: 
 
-            logger.debug(f"tool call by LLM: {tool_call}")
+                logger.debug(f"tool call by LLM: {tool_call}")
 
-            function_name = tool_call.function.name
-            function_to_call = ss.tooling_functions[function_name]  
+                function_name = tool_call.function.name
+                function_to_call = ss.tooling_functions[function_name]  
 
-            #test if arguments are a json string and convert them to a dictionary
-            #needed for backward compatibility openai beta parse and openai chat completion
-            function_args = tool_call.function.arguments
-            if isinstance(function_args, str):
-                function_args = json.loads(function_args)
+                #test if arguments are a json string and convert them to a dictionary
+                #needed for backward compatibility openai beta parse and openai chat completion
+                function_args = tool_call.function.arguments
+                if isinstance(function_args, str):
+                    function_args = json.loads(function_args)
 
-            #assume that a tool call call may yield multiple messages (maybe it is another agent...)
-            #pass them up one by one but do not do anything with them...
-            for function_response in function_to_call(**function_args):
-                logger.debug(f"tool call result: {function_response}")
-                yield function_response
-    
-            #...except with the last answer from the tool call, which we are going to pass to the LLM as the final result of this tool call
-            messages.append({
-                "tool_call_id": tool_call.id,
-                "role": "tool", 
-                "name": function_name,
-                "content": function_response.msg_to_user,
-            }) 
+                #assume that a tool call call may yield multiple messages (maybe it is another agent...)
+                #pass them up one by one but do not do anything with them...
+                for function_response in function_to_call(**function_args):
+                    logger.debug(f"tool call result: {function_response}")
+                    yield function_response
+        
+                #...except with the last answer from the tool call, which we are going to pass to the LLM as the final result of this tool call
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool", 
+                    "name": function_name,
+                    "content": function_response.msg_to_user,
+                }) 
 
-        #now that all the tool calls have been executed, we need to clean up the ids of the mental map to ensure they are unique 
-        ss.mm = mm_rebase_id(ss.mm)  
-        messages = prompt_update_assistant_notes(ss, ss.mm, messages) #this ensures that the new version of the assistant note is correctly reflected in the prompt in case another call to the LLM is necessary
+            #now that all the tool calls have been executed, we need to clean up the ids of the mental map to ensure they are unique 
+            ss.mm = mm_rebase_id(ss.mm)  
+            messages = prompt_update_assistant_notes(ss, ss.mm, messages) #this ensures that the new version of the assistant note is correctly reflected in the prompt in case another call to the LLM is necessary
 
         #decide whether another call to the LLM is necessary and permitted
         if counter >= ss.MAX_TURNS: #return control to the user after a certain number of turns
