@@ -264,28 +264,32 @@ def ui(make_session_state, app_name, revision=None):
                                 roll_back_dd = gr.Dropdown([], label="Roll Back")
 
                         with gr.Column(): #mental map
-                            with gr.Accordion(label='Editor', open=False):
-                                gr.Markdown("You can edit the notes of the assistant.")
-                                mm_editor = gr.Code(label=None, value=ss.value.mm, language="html")
-                                with gr.Row(): 
-                                    commit_btn = gr.Button("Commit", elem_classes='tool-button', scale=0)
-                                    rebase_btn = gr.Button("Rebase", elem_classes='tool-button', scale=0)
+                            gr.Markdown('Edit the ASSISTANT NOTES to add or correct what the AI wrote. You can also provide structure to the document by adding id="1" tags in your elements: this will enable to the AI to change them. Use elements with class="Instructions" to provide detailed instructions to the AI.')
+                            edit_toggle_btn = gr.Button("Edit", size='sm')
+                            mm_editor = gr.Code(label=None, value=ss.value.mm, language="html", visible=False)
+                            doc_viewer = gr.HTML(mm_for_display(ss.value.mm, rebase=True), elem_id="doc_viewer", visible=True)
 
-                            doc_viewer = gr.HTML(mm_for_display(ss.value.mm, rebase=True), elem_id="doc_viewer")
+                            #@rebase_btn.click(inputs=[ss, mm_editor], outputs=[ss, mm_editor, doc_viewer])
+                            #def rebase_mm(ss, content):
+                            #    ss.mm = content
+                            #    html = mm_for_display(ss.mm, rebase=True)
+                            #    editor = gr.Code(label="Mental Map Editor", value=html, language="html")
+                            #    return ss, editor, html
 
-                            @rebase_btn.click(inputs=[ss, mm_editor], outputs=[ss, mm_editor, doc_viewer])
-                            def rebase_mm(ss, content):
-                                ss.mm = content
-                                html = mm_for_display(ss.mm, rebase=True)
-                                editor = gr.Code(label="Mental Map Editor", value=html, language="html")
-                                return ss, editor, html
-
-                            @commit_btn.click(inputs=[ss, mm_editor], outputs=[ss, mm_editor, doc_viewer])
-                            def commit_mm(ss, content):
-                                ss.mm = content
-                                html = mm_for_display(ss.mm, rebase=False) #can't rebase because the edits might not be complete
-                                editor = gr.Code(label="Mental Map Editor", value=html, language="html")
-                                return ss, editor, html
+                            @edit_toggle_btn.click(inputs=[ss, mm_editor, edit_toggle_btn], outputs=[ss, mm_editor, doc_viewer, edit_toggle_btn])
+                            def edit_toggle(ss, mm_editor, edit_toggle_btn):
+                                if edit_toggle_btn == 'View': #we are in Edit mode
+                                    #toggle to View mode
+                                    ss.mm = mm_for_display(mm_editor, rebase=True)  #capture the changes made by the user
+                                    editor = gr.Code(value=ss.mm, visible=False)
+                                    viewer = gr.HTML(value=ss.mm, visible=True)
+                                    btn = gr.Button(value="Edit")
+                                else: #we are in View mode
+                                    #toggle to Edit mode
+                                    editor = gr.Code(value=ss.mm, visible=True) #in case it has been changed by the assistant
+                                    viewer = gr.HTML(visible=False)
+                                    btn = gr.Button(value="View")
+                                return ss, editor, viewer, btn
 
                 with gr.Tab("App Designer"):
 
@@ -535,15 +539,17 @@ def ui(make_session_state, app_name, revision=None):
             return ss, conversation_for_display(ss.conversation), "", editor, html, get_library_index(ss), gr.Textbox(value=name), dd, title
 
 
-        def respond(ss, msg, api_key_state): 
+        def respond(ss, msg, editor, api_key_state): 
             """Handler of the "submit" button in the user interface. 
             This will make the agent process the user input and handle the refresh of the UI as answer messages are coming through"""
 
             #make sure there is a LLM available
             check_api_key(ss, api_key_state)
 
+            #direct user message to the LLM
             content = msg['text']
 
+            #if the user has uploaded files in the chat, add them to the user message
             files = msg['files']
             if len(files) > 0:
                 import pymupdf4llm
@@ -555,13 +561,17 @@ def ui(make_session_state, app_name, revision=None):
 
             msg = content
 
+
+            #capture any edit made by the user to the mental map
+            html = mm_for_display(ss.mm, rebase=True) 
+            ss.mm = html
+
             #add the user's prompt to the conversation adn create a snapshot of current state so that we can roll back to this point
             ss.current_turn += 1 
+
             ss.conversation.append({'role':'user', 'source':'user', 'content':msg, 'tool_input':'', 'turn':ss.current_turn, 'mm':ss.mm}) 
 
             #clean the ids of the mental map to make sure they are unique, return the mm in html format
-            html = mm_for_display(ss.mm, rebase=True) 
-            ss.mm = html
 
             #first update to the user interface; this simply moves the user message from the input box to the chat history in the user interface
             chat_history = conversation_for_display(ss.conversation) #prepare the conversation for display in the chatbot
@@ -590,8 +600,7 @@ def ui(make_session_state, app_name, revision=None):
             yield ss, msg, chat_history, editor, html, dd  
 
         #enables the user to interrupt the agent's processing of the user input
-        #run_event = msg_btn.click(fn=respond, inputs=[ss, msg], outputs=[ss, msg, chatbot, mm_editor, doc_viewer, roll_back_dd])
-        run_event = msg.submit(fn=respond, inputs=[ss, msg, api_key_state], outputs=[ss, msg, chatbot, mm_editor, doc_viewer, roll_back_dd])
+        run_event = msg.submit(fn=respond, inputs=[ss, msg, mm_editor, api_key_state], outputs=[ss, msg, chatbot, mm_editor, doc_viewer, roll_back_dd])
         stop_btn.click(fn=None, inputs=None, outputs=None, cancels=[run_event]) 
 
         def login(api_key_state, profile: gr.OAuthProfile | None):
