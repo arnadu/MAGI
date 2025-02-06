@@ -6,18 +6,20 @@ from bs4 import BeautifulSoup
 
 import gradio as gr
 
-import openai
-from huggingface_hub import InferenceClient
+#import openai
+#from huggingface_hub import InferenceClient
 
 import constants as c
 from  agent import agent_response, explain, rebase_id
 from  agent import get_library_index, get_list_of_assessments, save_assessment_todb, load_assessment_fromdb
 from agent import check_api_key
 from database import get_list_of_app_templates, get_revisions_of_app_template, get_template_fromdb
-from database import save_template_todb
+#from database import save_template_todb
 
 import logging
 import sys
+
+from key_store import head_js, decrypt_value
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -121,10 +123,13 @@ def make_model_list():
     models.append(f"{c.LLMProvider.HUGGINGFACE}:{c.HF_LLAMA_3_3_70B_INSTRUCT}")
     return models
 
+
+#note: the same logic is also implemented in js
 def parse_provider_model(provider_model):
     """parse a provider:model string into a tuple"""
     provider, model = provider_model.split(":")
     return provider, model
+
 
 
 def ui(make_session_state, app_name, revision=None):
@@ -136,11 +141,10 @@ def ui(make_session_state, app_name, revision=None):
 
     gr.set_static_paths(paths=["assets/"])    
 
-    #with gr.Blocks(fill_width=True, fill_height=True, css=css) as demo:  #theme=theme
-    with gr.Blocks(css=css) as demo:  #theme=theme
+    with gr.Blocks(css=css, head=head_js) as demo:  
 
         ss = gr.State(value=make_session_state(app_name, revision))  #start the UI with a blank session state of the specified app template
-        api_key_state = gr.State(value=None)  # Store all availale API keys in memory during the session; do not persist.
+        user_info = gr.State(value={"username":None})  #keet track of authenticated user
 
         with gr.Row():
 
@@ -163,30 +167,45 @@ def ui(make_session_state, app_name, revision=None):
                         ss.STRUCTURED_OUTPUT = str_out
                         return ss
 
-                    @llm_provider.change(inputs=[ss, api_key_state, llm_provider], outputs=[ss, api_key])
-                    def update_llm_provider(ss, api_key_state, provider):
-                        provider, model = parse_provider_model(provider)
-                        ss.llm.provider = provider
-                        ss.llm.model = model    
-                        key = check_api_key(ss, api_key_state) #this function has a side effect and sets the key in ss.llm.api_key
-                        return ss, key
+                    def set_model_key(ss, provider_model, encrypted_key):
+                        #update the session state with the selected LLM provider and model
+                        #then decrypt the key and store it in the session state
+                        provider, model = parse_provider_model(llm_provider)
+                        ss.llm_provider = provider
+                        ss.llm_model = model
+                        if encrypted_key:
+                            key = decrypt_value(encrypted_key)
+                            ss.llm_api_key = key
+                        else:
+                            ss.llm_api_key = None
 
-                    @api_key.change(inputs=[ss, api_key_state, api_key], outputs=[ss, api_key_state])
-                    def update_api_key(ss, api_key_state, api_key):
-                        """record this provider's key in api_key_state, and also sets it in ss.llm.api_key"""
-                        #TODO: add other params to control the LLM    
-                        #TODO: move the key names to constants.py because they are also used in check_api_key() from agent.py                  
-                        if api_key_state is None:
-                            api_key_state = {}
-                        match ss.llm.provider:
-                            case c.LLMProvider.OPENAI:
-                                api_key_state["OPENAI_API_KEY"] = api_key
-                            case c.LLMProvider.HUGGINGFACE:
-                                api_key_state["HUGGINGFACE_API_KEY"] = api_key
-                            case c.LLMProvider.ANTHROPIC:
-                                api_key_state["ANTHROPIC_API_KEY"] = api_key
-                        ss.llm.api_key = api_key
-                        return ss, api_key_state
+                    #retrieve the (encrypted) API key for the selected LLM provider from the browser's local storage if it exists already and pass it to the gradio session
+                    llm_provider.change(fn=None, inputs=[llm_provider], outputs=[api_key],
+                        js="""(llm_provider) => {
+                            //tretrieve this LLM provider (encrypted) API key from the browser's local storage if it exists already
+                            const key_name = llm_provider.split(':')[0]; 
+                            const key_value = localStorage.getItem(key_name); 
+                            console.log('retrieved ', key_name, key_value); 
+                            return key_value || ''; 
+                        }"""
+                    ).then(fn=set_model_key, inputs=[ss, llm_provider, api_key], outputs=[ss])
+
+                    #acquire the API key from the user (the .submit event is triggered on pressing <enter>), encrypt it, store it in the browser's local storage and pass it to the gradio backend 
+                    api_key.submit(fn=None, 
+                                   inputs=[llm_provider, api_key], 
+                                   outputs=[api_key],
+                                    js="""async (llm_provider, api_key) => {
+                                        //encrypt the API key with the public key and store it in the browser's local storage
+                                        //return the encrypted value to the UI, this is what the backend will get
+                                        //the backend will decrypt it using the private key
+                                        const key_name = llm_provider.split(':')[0];
+                                        const encrypted = await encryptValue(api_key);
+                                        console.log('encrypted ', api_key, ' --> ', encrypted); 
+                                        console.log('saving ', key_name, encrypted); 
+                                        localStorage.setItem(key_name, encrypted); 
+                                        return encrypted;
+                                    }"""
+                    ).then(fn=set_model_key, inputs=[ss, llm_provider, api_key], outputs=[ss])
 
                 with gr.Accordion(label='Assessment', open=True):
 
@@ -357,14 +376,14 @@ def ui(make_session_state, app_name, revision=None):
                             template['library_prompt'], 
                         )
 
-                    @save_template_btn.click(inputs=[api_key_state, new_template_name, system_prompt, initial_prompt, assessment_template, analyze_description, analyze_param, analyze_system_prompt, library_prompt, public_template_cb], 
+                    @save_template_btn.click(inputs=[user_info, new_template_name, system_prompt, initial_prompt, assessment_template, analyze_description, analyze_param, analyze_system_prompt, library_prompt, public_template_cb], 
                                             outputs=[template_name_dd, template_revision_dd, app_dd])
-                    def save_template(api_key_state, name, sys_prompt, init_prompt, assessment_template, analyze_description, analyze_param, analyze_system_prompt, library_prompt, is_public):    
+                    def save_template(user_info, name, sys_prompt, init_prompt, assessment_template, analyze_description, analyze_param, analyze_system_prompt, library_prompt, is_public):    
                         
                         if not name:
                             raise gr.Error("Please enter an Application name")
                         
-                        if not api_key_state or not api_key_state["username"]:
+                        if not user_info or not user_info["username"]:
                             raise gr.Error("Please login")
                         
                         # Create a new instance of the application class
@@ -376,7 +395,7 @@ def ui(make_session_state, app_name, revision=None):
                         ss.a.initial_prompt = init_prompt
                         ss.a.assessment_template = assessment_template
                         ss.a.public = is_public
-                        ss.a.owner = api_key_state["username"]
+                        ss.a.owner = user_info["username"]
                         
                         ss.a.analyze_system_prompt = analyze_system_prompt
                         for t in ss.a.tooling_descriptions:
@@ -395,9 +414,9 @@ def ui(make_session_state, app_name, revision=None):
                         # Update dropdowns
 
                         return (
-                            gr.Dropdown(get_list_of_app_templates(api_key_state["username"]), value=name),
+                            gr.Dropdown(get_list_of_app_templates(user_info["username"]), value=name),
                             gr.Dropdown(get_revisions_of_app_template(name), value="Latest"),
-                            gr.Dropdown(get_list_of_app_templates(api_key_state["username"])),
+                            gr.Dropdown(get_list_of_app_templates(user_info["username"])),
                         )
 
                 with gr.Tab("Explain"):
@@ -438,9 +457,9 @@ def ui(make_session_state, app_name, revision=None):
                     
                     llm_call_number.change(retrieve_llm_call, inputs=[ss, llm_call_number], outputs=[ss, messages, completion, prompt_text, answer])
                     
-                    @explain_btn.click(inputs=[ss, api_key_state, llm_call_number, question], outputs=[ss, answer])
-                    def explain_llm_call(ss, api_key_state, llm_call_number, question):
-                        check_api_key(ss, api_key_state)
+                    @explain_btn.click(inputs=[ss, llm_call_number, question], outputs=[ss, answer])
+                    def explain_llm_call(ss, llm_call_number, question):
+                        check_api_key(ss)
                         i = int(llm_call_number)
                         l = len(ss.llm_call_list)
                         explanation = "No such LLM call number"
@@ -450,10 +469,10 @@ def ui(make_session_state, app_name, revision=None):
                         return ss, explanation
 
 
-        @upload_button.click(inputs=[ss, api_key_state, file_picker, document_name, document_category, document_abstract, app_default_cb], 
+        @upload_button.click(inputs=[ss, user_info, file_picker, document_name, document_category, document_abstract, app_default_cb], 
                             outputs=[ss, file_picker, document_name, document_category, document_abstract, document_list])
-        def upload_document(ss, api_key_state, temp_file_path, document_name, document_category, document_abstract, app_default_cb):
-            check_api_key(ss, api_key_state)
+        def upload_document(ss, user_info, temp_file_path, document_name, document_category, document_abstract, app_default_cb):
+            check_api_key(ss)
             """Upload a document into the library."""
             if app_default_cb:
                 project_name = f"{ss.a.app_name}.*" #make the document avaiable by default to all assessments for this application
@@ -465,8 +484,8 @@ def ui(make_session_state, app_name, revision=None):
             return ss, None, None, None, None, get_library_index(ss)
 
 
-        @save_as_btn.click(inputs=[ss, api_key_state, assessment_name, public_assessment_cb], outputs=[ss, load_assessment_dd, title, public_assessment_cb])
-        def save_assessment_as(ss, api_key_state, new_name, is_public):
+        @save_as_btn.click(inputs=[ss, user_info, assessment_name, public_assessment_cb], outputs=[ss, load_assessment_dd, title, public_assessment_cb])
+        def save_assessment_as(ss, user_info, new_name, is_public):
             old_name = ss.name
             #TODO: figure out how to get gradio to popup a modal confirmation dialog?
             #if ss.library.project_exists(new_name):
@@ -477,7 +496,7 @@ def ui(make_session_state, app_name, revision=None):
             if old_name != new_name:
                 ss.library.clone_project(old_name, new_name)
             ss.public = is_public
-            ss.owner = api_key_state["username"]
+            ss.owner = user_info["username"]
             data = ss.dumps()
             res = save_assessment_todb(ss.name,data)
             dd = gr.Dropdown(get_list_of_assessments(), show_label=False, scale=1)
@@ -539,12 +558,12 @@ def ui(make_session_state, app_name, revision=None):
             return ss, conversation_for_display(ss.conversation), "", editor, html, get_library_index(ss), gr.Textbox(value=name), dd, title
 
 
-        def respond(ss, msg, editor, api_key_state): 
+        def respond(ss, msg, editor): 
             """Handler of the "submit" button in the user interface. 
             This will make the agent process the user input and handle the refresh of the UI as answer messages are coming through"""
 
             #make sure there is a LLM available
-            check_api_key(ss, api_key_state)
+            check_api_key(ss)
 
             #direct user message to the LLM
             content = msg['text']
@@ -600,10 +619,10 @@ def ui(make_session_state, app_name, revision=None):
             yield ss, msg, chat_history, editor, html, dd  
 
         #enables the user to interrupt the agent's processing of the user input
-        run_event = msg.submit(fn=respond, inputs=[ss, msg, mm_editor, api_key_state], outputs=[ss, msg, chatbot, mm_editor, doc_viewer, roll_back_dd])
+        run_event = msg.submit(fn=respond, inputs=[ss, msg, mm_editor], outputs=[ss, msg, chatbot, mm_editor, doc_viewer, roll_back_dd])
         stop_btn.click(fn=None, inputs=None, outputs=None, cancels=[run_event]) 
 
-        def login(api_key_state, profile: gr.OAuthProfile | None):
+        def login(user_info, profile: gr.OAuthProfile | None):
             #we use gradio's OAuth authentication of HF Spaces to authenticate users https://www.gradio.app/guides/sharing-your-app#authentication
 
             #we need a user to be authenticated in order to allow saving to the database. The following interface elements must be inactive if the user is not known
@@ -622,9 +641,7 @@ def ui(make_session_state, app_name, revision=None):
             logger.info(f"Logging with profile: {profile}")
 
             username = profile.username if profile else None
-            if not api_key_state:
-                api_key_state = {}
-            api_key_state['username'] = username
+            user_info['username'] = username
 
             app_templates_list = get_list_of_app_templates(username)
 
@@ -634,12 +651,27 @@ def ui(make_session_state, app_name, revision=None):
 
             if not username:
                 #deactivate the UI elements that require to be authenticated
-                return api_key_state, gr.Button(interactive=False), gr.File(interactive=False), gr.Button(interactive=False), gr.Button(interactive=False), app_dd, load_assessment_dd, template_name_dd
+                return user_info, gr.Button(interactive=False), gr.File(interactive=False), gr.Button(interactive=False), gr.Button(interactive=False), app_dd, load_assessment_dd, template_name_dd
             else:
                 #activate UI elements that require the user to be known
-                return api_key_state, gr.Button(interactive=True), gr.File(interactive=True), gr.Button(interactive=True), gr.Button(interactive=True), app_dd, load_assessment_dd, template_name_dd
+                return user_info, gr.Button(interactive=True), gr.File(interactive=True), gr.Button(interactive=True), gr.Button(interactive=True), app_dd, load_assessment_dd, template_name_dd
 
-        demo.load(fn=login, inputs=[api_key_state], outputs=[api_key_state, save_as_btn, file_picker, upload_button, save_template_btn, app_dd, load_assessment_dd, template_name_dd])
+        #.then() does not seem to trigger unless there is a valid python function, even when there is a js function
+        #hence the need for a dummary lambda x,y:y function
+        #there is also a subtlety about why two params are needed; lambda x:x, inputs=[llm_provider], outputs=[api_key], js=(llm_provider) => { return api_key } does not work. the api_key ends up in llm_provider...
+        demo.load(fn=login, 
+                    inputs=[user_info], 
+                    outputs=[user_info, save_as_btn, file_picker, upload_button, save_template_btn, app_dd, load_assessment_dd, template_name_dd],
+                ).then(fn=None, inputs=[llm_provider], outputs=[api_key], js = """
+                    (llm_provider) => { 
+                        //try and retrieve the selected LLM provider (encrypted) API key from the browser's local storage if it exists already
+                        const key_name = llm_provider.split(':')[0];
+                        const key_value = localStorage.getItem(key_name); 
+                        console.log('retrieved ', key_name, key_value); 
+                        return key_value || ''; 
+                    }"""
+                ).then(fn=set_model_key, inputs=[ss, llm_provider, api_key], outputs=[ss])
+
     return demo
 
 
@@ -647,10 +679,7 @@ def ui(make_session_state, app_name, revision=None):
 if __name__ == "__main__":
     share = False
     #share = True
-
-    from agent import SessionState as SessionState
-
     from agent import SessionState as SessionState
     demo = ui(SessionState, app_name="Privacy Assessment", revision=None)
     demo.queue()
-    demo.launch(share=share)  #need to call it demo for gradio's reload mode
+    demo.launch(share=share, ssr_mode=False)  #need to call it demo for gradio's reload mode
