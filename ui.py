@@ -150,6 +150,8 @@ def ui(make_session_state, app_name, revision=None):
 
             with gr.Column(scale=3) as sidebar:  #sliding sidebar
 
+                gr.Button(value="User Guide", link="https://github.com/arnadu/MAGI/blob/main/DOC.md")
+
                 with gr.Accordion(label='Login', open=True):
 
                     gr.Markdown("You will need to login with a HuggingFace account (https://huggingface.co/) in order to save your work, or to upload documents to the library.\nWARNING: the login button will start a new session and you will loose your work, so you should login before anything else.")
