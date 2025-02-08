@@ -116,7 +116,6 @@ def make_model_list():
     """make a list of availabel provide:model pairs"""
     models = []
     models.append(f"{c.LLMProvider.OPENAI}:{c.OAI_GPT_4o}")
-    models.append(f"{c.LLMProvider.OPENAI}:{c.OAI_GPT_o1_mini}")
     models.append(f"{c.LLMProvider.OPENAI}:{c.OAI_GPT_o1}")
     models.append(f"{c.LLMProvider.ANTHROPIC}:{c.A_CLAUDE_3_5_SONNET}")
     models.append(f"{c.LLMProvider.ANTHROPIC}:{c.A_CLAUDE_3_OPUS}")
@@ -154,7 +153,7 @@ def ui(make_session_state, app_name, revision=None):
 
                 with gr.Accordion(label='Login', open=True):
 
-                    gr.Markdown("You will need to login with a HuggingFace account (https://huggingface.co/) in order to save your work, or to upload documents to the library.\nWARNING: the login button will start a new session and you will loose your work, so you should login before anything else.")
+                    gr.Markdown("Warning - logging-in will restart your session without saving")
                     login_btn = gr.LoginButton()
 
                 with gr.Accordion(label='LLM Model', open=True):
@@ -172,28 +171,30 @@ def ui(make_session_state, app_name, revision=None):
                     def set_model_key(ss, provider_model, encrypted_key):
                         #update the session state with the selected LLM provider and model
                         #then decrypt the key and store it in the session state
-                        provider, model = parse_provider_model(llm_provider)
-                        ss.llm_provider = provider
-                        ss.llm_model = model
+                        provider, model = parse_provider_model(provider_model)
+                        ss.llm.provider = provider
+                        ss.llm.model = model
                         if encrypted_key:
                             key = decrypt_value(encrypted_key)
-                            ss.llm_api_key = key
+                            ss.llm.api_key = key
                         else:
-                            ss.llm_api_key = None
+                            ss.llm.api_key = None
+                        return ss
 
                     #retrieve the (encrypted) API key for the selected LLM provider from the browser's local storage if it exists already and pass it to the gradio session
-                    llm_provider.change(fn=None, inputs=[llm_provider], outputs=[api_key],
-                        js="""(llm_provider) => {
+                    #for a funky reason, .then does not trigger if there is only js in the preceding event, hence the need for a dummy lambda, which in turn requires fooling around with the params
+                    llm_provider.change(fn=lambda _,y: y, inputs=[llm_provider, api_key], outputs=[api_key],
+                        js="""(llm_provider, dummy) => {
                             //tretrieve this LLM provider (encrypted) API key from the browser's local storage if it exists already
                             const key_name = llm_provider.split(':')[0]; 
                             const key_value = localStorage.getItem(key_name); 
                             console.log('retrieved ', key_name, key_value); 
-                            return key_value || ''; 
+                            return [llm_provider, key_value || '']; 
                         }"""
                     ).then(fn=set_model_key, inputs=[ss, llm_provider, api_key], outputs=[ss])
 
                     #acquire the API key from the user (the .submit event is triggered on pressing <enter>), encrypt it, store it in the browser's local storage and pass it to the gradio backend 
-                    api_key.submit(fn=None, 
+                    api_key.submit(fn=lambda _,y:y, 
                                    inputs=[llm_provider, api_key], 
                                    outputs=[api_key],
                                     js="""async (llm_provider, api_key) => {
@@ -205,7 +206,7 @@ def ui(make_session_state, app_name, revision=None):
                                         console.log('encrypted ', api_key, ' --> ', encrypted); 
                                         console.log('saving ', key_name, encrypted); 
                                         localStorage.setItem(key_name, encrypted); 
-                                        return encrypted;
+                                        return [llm_provider, encrypted];
                                     }"""
                     ).then(fn=set_model_key, inputs=[ss, llm_provider, api_key], outputs=[ss])
 
@@ -664,13 +665,14 @@ def ui(make_session_state, app_name, revision=None):
         demo.load(fn=login, 
                     inputs=[user_info], 
                     outputs=[user_info, save_as_btn, file_picker, upload_button, save_template_btn, app_dd, load_assessment_dd, template_name_dd],
-                ).then(fn=None, inputs=[llm_provider], outputs=[api_key], js = """
-                    (llm_provider) => { 
+                ).then(fn=lambda _,y:y, 
+                        inputs=[llm_provider, api_key], outputs=[api_key], js = """
+                    (llm_provider, dummy) => { 
                         //try and retrieve the selected LLM provider (encrypted) API key from the browser's local storage if it exists already
                         const key_name = llm_provider.split(':')[0];
                         const key_value = localStorage.getItem(key_name); 
                         console.log('retrieved ', key_name, key_value); 
-                        return key_value || ''; 
+                        return [llm_provider, key_value || '']; 
                     }"""
                 ).then(fn=set_model_key, inputs=[ss, llm_provider, api_key], outputs=[ss])
 

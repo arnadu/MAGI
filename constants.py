@@ -28,7 +28,6 @@ ENV_VAR_NAMES = {
 #LLM_MODEL = "gpt-4o-2024-05-13"
 #LLM_MODEL = "gpt-4o-mini-2024-07-18"
 OAI_GPT_4o = "gpt-4o-2024-08-06"
-OAI_GPT_o1_mini = "o1-mini-2024-09-12"
 OAI_GPT_o1 = "o1-2024-12-17"
 
 
