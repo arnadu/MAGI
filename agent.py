@@ -392,36 +392,11 @@ def editor(ss, action, id, content):  #side-effect: this function will update ss
     ss.mm = soup.prettify(formatter=None)  #formatter=None so that html tags that may appear in the content are not escaped
     yield status
 
-def get_key(api_key_state, key_name):
-    """Get an API key from the UI or the OS environment"""
-
-    api_key = None
-    if api_key_state is not None: #first try to get the key from the UI
-        api_key = api_key_state.get(key_name, None)               
-    if api_key is None: #then try to get it from the OS environment
-        api_key = os.environ.get(key_name)
-    return api_key
-
-def check_api_key(ss, api_key_state):
-    """Set the API key for the selected model"""
-
-    match(ss.llm.provider):
-
-        case c.LLMProvider.OPENAI:   
-            ss.llm.api_key = get_key(api_key_state, "OPENAI_API_KEY")
-
-        case c.LLMProvider.ANTHROPIC:
-            ss.llm.api_key = get_key(api_key_state, "ANTHROPIC_API_KEY")
-
-        case c.LLMProvider.HUGGINGFACE:
-            ss.llm.api_key = get_key(api_key_state, "HUGGINGFACE_API_KEY")
-
-        case c.LLMProvider.LAMBDALABS:
-            ss.llm.api_key = get_key(api_key_state, "LAMBDALABS_API_KEY")
-
-        case _:
-            ss.llm.api_key = ''
-    
+def check_api_key(ss):
+    #ry to get the LLM API key from an environment variable if it is not already set
+    if not ss.llm.api_key:
+        key_name = c.ENV_VAR_NAMES[ss.llm.provider]
+        ss.llm.api_key = os.environ.get(key_name)
     return ss.llm.api_key
 
 def llm_loop(ss): #this generator will yield multiple updates that should be displayed in the user interface

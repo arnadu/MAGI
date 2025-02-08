@@ -153,3 +153,20 @@ if __name__ == "__main__":
     #    print(ret)
 
     dump_templates(".")
+
+
+"""
+DATABASE MANAGEMENT 
+
+https://www.mongodb.com/docs/manual/tutorial/backup-and-restore-tools/
+
+1- download  mongodb tools
+
+2- dumpt the database to a file with your connection string
+mongodump --uri="mongodb+srv://username:password@cluster0.example.mongodb.net" --db xyz --collection abc -o dump_dir_path
+
+3- restore the database with a new name from the file
+mongorestore --uri="mongodb+srv://username:password@cluster0.example.mongodb.net" --db new_db_name -o dump_dir_path/old_db_name
+
+"""
+
