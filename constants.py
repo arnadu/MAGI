@@ -4,12 +4,21 @@ from typing import List, Union, Annotated
 from pydantic import BaseModel, Field
 from dataclasses import dataclass, field
 
-
+#names of the providers of the LLMs; they will appear in dropdown
+# will also be used as keys in api_key_state dictionary and in the browser's local storage
 class LLMProvider:
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     LAMBDALABS = "lambdalabs"
     HUGGINGFACE = "huggingface"
+
+#names of the system environment variables that store the API keys of these providers
+ENV_VAR_NAMES = {
+    LLMProvider.OPENAI: "OPENAI_API_KEY",
+    LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
+    LLMProvider.LAMBDALABS: "LAMBDALABS_API_KEY",
+    LLMProvider.HUGGINGFACE: "HUGGINGFACE_API_KEY"
+}
 
 #OPENAI models
 #LLM_MODEL = "gpt-3.5-turbo-0125"
@@ -19,7 +28,6 @@ class LLMProvider:
 #LLM_MODEL = "gpt-4o-2024-05-13"
 #LLM_MODEL = "gpt-4o-mini-2024-07-18"
 OAI_GPT_4o = "gpt-4o-2024-08-06"
-OAI_GPT_o1_mini = "o1-mini-2024-09-12"
 OAI_GPT_o1 = "o1-2024-12-17"
 
 
